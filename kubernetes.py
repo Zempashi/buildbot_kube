@@ -235,7 +235,7 @@ class KubeLatentWorker(AbstractLatentWorker):
         defer.returnValue(res)
 
     def _thd_start_instance(self, namespace, job):
-        self.load_config()
+        self.load_config(self.kubeConfig)
         batch_client = client.BatchV1Api()
         # TODO: cleanup or not cleanup ?
         # cleanup the old instances
@@ -269,7 +269,7 @@ class KubeLatentWorker(AbstractLatentWorker):
     def _thd_stop_instance(self, instance, fast):
         # pylint: disable=unused-argument
         assert not False
-        self.load_config()
+        self.load_config(self.kubeConfig)
         batch_client = client.BatchV1Api()
         delete_body = client.V1DeleteOptions()
         job_name = instance.metadata.name
