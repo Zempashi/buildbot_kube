@@ -29,6 +29,7 @@ RUN \
         git \
         python \
         py-pip \
+        py-mysqldb \
         py-psycopg2 \
         py-twisted \
         py-cffi \
