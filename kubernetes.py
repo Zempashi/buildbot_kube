@@ -31,15 +31,18 @@ try:
     from kubernetes import config as kube_config
     from kubernetes import client
 except ImportError as exc:
+    kube_config = None
     client = None
 
 
 @implementer(IRenderable)
 class KubeRenderable(object):
 
-    untouched_types = integer_types + (float, bool, bytes, datetime, date)
+    untouched_types = integer_types + (
+        float, bool, bytes, datetime, date, type(None)
+    )
 
-    def __init__(self, kube_obj, *args):
+    def __init__(self, kube_obj):
         self.kube_obj = kube_obj
 
     @defer.inlineCallbacks
@@ -55,30 +58,23 @@ class KubeRenderable(object):
         """Recursively parse kubernetes object tree to find renderable"""
         # This code is inspired by the code of kubernetes client-python
         # https://github.com/kubernetes-incubator/client-python/blob/4e593a7530a8751c817cceec715bfe1d03997793/kubernetes/client/api_client.py#L172-L214
-        if isinstance(obj, type(None)):
-            defer.returnValue(None)
-        elif isinstance(obj, string_types + (text_type,)):
+        if isinstance(obj, string_types + (text_type,)):
             res = yield Interpolate(obj).getRenderingFor(props)
-            defer.returnValue(res)
         elif isinstance(obj, tuple):
-            res = yield self.recursive_render(list(obj))
-            defer.returnValue(tuple(res))
+            res = yield self.recursive_render(list(obj), props)
         elif isinstance(obj, list):
             res = []
             for sub_obj in obj:
                 temp = yield self.recursive_render(sub_obj, props)
                 res.append(temp)
-            defer.returnValue(res)
         elif isinstance(obj, dict):
-            res = {}
+            res = {}  # pylint: disable=redefined-variable-type
             for key, sub_obj in obj.item():
                 res[key] = yield self.recursive_render(sub_obj, props)
-            defer.returnValue(res)
-        elif isinstance(obj, self.untouched_types):
-            defer.returnValue(obj)
         elif isinstance(obj, IRenderable):
             res = yield obj.getRenderingFor(props)
-            defer.returnValue(res)
+        elif isinstance(obj, self.untouched_types):
+            res = obj
         else:
             for key in obj.swagger_types:
                 value = getattr(obj, key)
@@ -86,7 +82,8 @@ class KubeRenderable(object):
                     continue
                 res = yield self.recursive_render(value, props)
                 setattr(obj, key, res)
-            defer.returnValue(obj)
+            res = obj
+        defer.returnValue(res)
 
 
 class KubeLatentWorker(AbstractLatentWorker):
@@ -99,14 +96,21 @@ class KubeLatentWorker(AbstractLatentWorker):
         config.error("The python module 'kubernetes>=1' is needed to use a "
                      "KubeLatentWorker")
 
-    def load_config(self):
+    def load_config(self, kubeConfig):
         try:
             kube_config.load_kube_config()
+            exception = None
         except Exception:
-            kube_config.load_incluster_config()
-        if self.kubeConfig:
-            for config_key, value in self.kubeConfig.items():
-                setattr(client.configuration, config_key, value)
+            try:
+                kube_config.load_incluster_config()
+                exception = None
+            except kube_config.config_exception.ConfigException as exc:
+                exception = exc
+        if exception and not (kubeConfig and 'host' in kubeConfig):
+            config.error("No kube-apimaster host provided")
+        for config_key, value in kubeConfig.items():
+            setattr(client.configuration, config_key, value)
+
 
     @classmethod
     def default_job(cls):
@@ -122,7 +126,7 @@ class KubeLatentWorker(AbstractLatentWorker):
                         containers=[
                             client.V1Container(
                                 name=job_name,
-                                image='buildbot/buildbot-worker:v0.9.5',
+                                image='buildbot/buildbot-worker',
                                 env=[
                                     client.V1EnvVar(
                                         name='BUILDMASTER',
@@ -152,18 +156,23 @@ class KubeLatentWorker(AbstractLatentWorker):
     def checkConfig(self, name, password, job=None, namespace=None,
                     masterFQDN=None, getMasterMethod=None,
                     kubeConfig=None, **kwargs):
+        # pylint: disable=too-many-arguments
+        # pylint: disable=unused-argument
+
         # Set build_wait_timeout to 0 if not explicitly set: Starting a
         # container is almost immediate, we can afford doing so for each build.
         if 'build_wait_timeout' not in kwargs:
             kwargs['build_wait_timeout'] = 0
         if not client:
             self.dependency_error()
+        self.load_config(kubeConfig)
         AbstractLatentWorker.checkConfig(self, name, password, **kwargs)
 
     @defer.inlineCallbacks
     def reconfigService(self, name, password, job=None, namespace=None,
                         masterFQDN=None, getMasterMethod=None,
                         kubeConfig=None, **kwargs):
+        # pylint: disable=too-many-arguments
 
         # Set build_wait_timeout to 0 if not explicitly set: Starting a
         # container is almost immediate, we can afford doing so for each build.
@@ -171,14 +180,26 @@ class KubeLatentWorker(AbstractLatentWorker):
             kwargs['build_wait_timeout'] = 0
         if password is None:
             password = self.getRandomPass()
+        # pylint: disable=attribute-defined-outside-init
         self.getMasterMethod = getMasterMethod
         if masterFQDN is None:
-            masterFQDN = self.get_master_qdn()
+            # pylint: disable=invalid-name
+            masterFQDN = self.get_master_qdn  # noqa: N806
+        if callable(masterFQDN):
+            # pylint: disable=invalid-name
+            masterFQDN = masterFQDN()
+        # pylint: disable=attribute-defined-outside-init
         self.masterFQDN = masterFQDN
-        self.namespace = namespace or 'default'
-        self.job = job or KubeRenderable(self.default_job())
+        self.load_config(kubeConfig)
+        # pylint: disable=attribute-defined-outside-init
         self.kubeConfig = kubeConfig
-        masterName = unicode2bytes(self.master.name)
+        # pylint: disable=attribute-defined-outside-init
+        self.namespace = namespace or 'default'
+        # pylint: disable=attribute-defined-outside-init
+        self.job = job or KubeRenderable(self.default_job())
+        # pylint: disable=invalid-name
+        masterName = unicode2bytes(self.master.name)  # noqa: N806
+        # pylint: disable=attribute-defined-outside-init
         self.masterhash = hashlib.sha1(masterName).hexdigest()[:6]
         yield AbstractLatentWorker.reconfigService(
             self, name, password, **kwargs)
@@ -187,10 +208,13 @@ class KubeLatentWorker(AbstractLatentWorker):
     def start_instance(self, build):
         if self.instance is not None:
             raise ValueError('instance active')
-        masterFQDN = self.masterFQDN
-        masterPort = '9989'
+        # pylint: disable=invalid-name
+        masterFQDN = self.masterFQDN  # noqa: N806
+        # pylint: disable=invalid-name
+        masterPort = '9989'  # noqa: N806
         if self.registration is not None:
-            masterPort = str(self.registration.getPBPort())
+            # pylint: disable=invalid-name
+            masterPort = str(self.registration.getPBPort())  # noqa: N806
         if ":" in masterFQDN:
             masterFQDN, masterPort = masterFQDN.split(':')
         master_properties = Properties.fromDict({
@@ -223,16 +247,16 @@ class KubeLatentWorker(AbstractLatentWorker):
             raise LatentWorkerFailedToSubstantiate(
                 'Failed to start container'
             )
-        job_name = instance.metadata.name
+        job_name = instance.metadata.name  # pylint: disable=no-member
         log.msg('Job created, Id: %s...' % job_name)
         self.instance = instance
         return [
-            instance.metadata.name,
+            job_name,
+            # pylint: disable=no-member
             instance.spec.template.spec.containers[0].image
         ]
 
     def stop_instance(self, fast=False):
-        assert not fast
         if self.instance is None:
             # be gentle. Something may just be trying to alert us that an
             # instance never attached, and it's because, somehow, we never
@@ -243,6 +267,8 @@ class KubeLatentWorker(AbstractLatentWorker):
         return threads.deferToThread(self._thd_stop_instance, instance, fast)
 
     def _thd_stop_instance(self, instance, fast):
+        # pylint: disable=unused-argument
+        assert not False
         self.load_config()
         batch_client = client.BatchV1Api()
         delete_body = client.V1DeleteOptions()
@@ -258,7 +284,8 @@ class KubeLatentWorker(AbstractLatentWorker):
             qdn_getter = self.default_master_qdn_getter
         return qdn_getter()
 
-    def get_fqdn(self):
+    @staticmethod
+    def get_fqdn():
         return socket.getfqdn()
 
     def get_ip(self):
