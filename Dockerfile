@@ -44,6 +44,7 @@ RUN \
         tzdata \
         curl && \
 # install pip dependencies
+    pip install autobahn==0.17.2 && \
     pip install --upgrade pip setuptools && \
     pip install "buildbot[bundle,tls]" && \
     pip install "kubernetes" && \
