@@ -1,0 +1,47 @@
+# Derived from ./manifests
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    k8s-app: buildbot-master
+    name: buildbot-master
+  name: buildbot-master
+  namespace: default
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        k8s-app: buildbot-master
+    spec:
+      containers:
+      - name: buildbot-master
+        image: quay.io/zempashi/buildbot_kube
+        imagePullPolicy: Always
+        env:
+        - name: BUILDBOT_CONFIG_URL
+          value: file:///mnt/master.cfg
+        - name: MY_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: buildbot
+              key: mysql_password
+        volumeMounts:
+        - name: buildbot-master-file
+          mountPath: /mnt
+        livenessProbe:
+          httpGet:
+            path: /
+            port: buildbot-ui
+          initialDelaySeconds: 60
+          periodSeconds: 3
+        ports:
+        - containerPort: 8010
+          name: buildbot-ui
+          protocol: TCP
+      volumes:
+      - name: buildbot-master-file
+        configMap:
+          name: buildbot-master.cfg
+      serviceAccountName: default

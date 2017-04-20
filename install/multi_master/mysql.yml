@@ -1,0 +1,43 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: mysql-buildbot
+spec:
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        k8s-app: mysql-buildbot
+    spec:
+      containers:
+      - image: mariadb
+        name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-buildbot
+              key: root_password
+
+        - name: MYSQL_DATABASE
+          value: buildbot
+
+        - name: MYSQL_USER
+          value: buildbot
+
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: buildbot
+              key: mysql_password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: mysql-buildbot
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mysql-buildbot
+        persistentVolumeClaim:
+          claimName: mysql-buildbot

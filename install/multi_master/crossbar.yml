@@ -1,0 +1,27 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    k8s-app: crossbar
+    name: crossbar
+  name: crossbar
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        k8s-app: crossbar
+    spec:
+      containers:
+      - name: crossbar
+        image: crossbario/crossbar
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: crossbar-config
+          mountPath: /node/.crossbar/
+      volumes:
+      - name: crossbar-config
+        configMap:
+          name: crossbar-config
