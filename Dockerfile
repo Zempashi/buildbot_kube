@@ -48,6 +48,7 @@ RUN \
     pip install --upgrade pip setuptools && \
     pip install "buildbot[bundle,tls]" && \
     pip install "kubernetes" && \
+    pip install "txrequests" && \
     pip install "/usr/src/buildbot" && \
     rm -r /root/.cache
 
